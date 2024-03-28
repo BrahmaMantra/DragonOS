@@ -2,6 +2,7 @@ use core::any::Any;
 use core::intrinsics::unlikely;
 
 use crate::filesystem::vfs::FSMAKER;
+use crate::libs::casting::DowncastArc;
 use crate::libs::rwlock::RwLock;
 use crate::{
     driver::base::device::device_number::DeviceNumber,
@@ -10,6 +11,7 @@ use crate::{
     libs::spinlock::{SpinLock, SpinLockGuard},
     time::TimeSpec, libs::casting::DowncastArc
 };
+
 use alloc::{
     collections::BTreeMap,
     string::String,
