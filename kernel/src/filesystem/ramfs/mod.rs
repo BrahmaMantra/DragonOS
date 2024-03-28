@@ -8,7 +8,7 @@ use crate::{
     filesystem::vfs::{core::generate_inode_id, FileType},
     ipc::pipe::LockedPipeInode,
     libs::spinlock::{SpinLock, SpinLockGuard},
-    time::TimeSpec,
+    time::TimeSpec, libs::casting::DowncastArc
 };
 use alloc::{
     collections::BTreeMap,
@@ -409,28 +409,38 @@ impl IndexNode for LockedRamFSInode {
         target: &Arc<dyn IndexNode>,
         new_name: &str,
     ) -> Result<(), SystemError> {
-        let old_inode: Arc<dyn IndexNode> = self.find(old_name)?;
+        let inode: Arc<dyn IndexNode> = self.find(old_name)?;
 
         // 在新的目录下创建一个硬链接
-        target.link(new_name, &old_inode)?;
-        // 取消现有的目录下的这个硬链接
-        if let Err(err) = self.unlink(old_name) {
-            // 如果取消失败，那就取消新的目录下的硬链接
-            target.unlink(new_name)?;
-            return Err(err);
-        }
-        //转型为&LockedRamFSInode类型
-        let target: &LockedRamFSInode = target
-            .downcast_ref::<LockedRamFSInode>()
-            .ok_or(SystemError::EPERM)?;
-        let old_inode: &LockedRamFSInode = old_inode
-            .downcast_ref::<LockedRamFSInode>()
-            .ok_or(SystemError::EPERM)?;
+        target.link(new_name, &inode)?;
 
-        //修改其对父节点的引用
-        let mut old_inode = old_inode.0.lock();
-        let target = target.0.lock();
-        old_inode.parent = target.self_ref.clone();
+        // 取消现有的目录下的这个硬链接
+        if let Err(e) = self.unlink(old_name){
+            // 当操作失败时回退操作
+            target.unlink(new_name)?;
+            return Err(e);
+        }
+
+        // 修改其对父节点的引用
+        if let Err(e) = || -> Result<(), SystemError> { 
+            inode
+                .downcast_ref::<LockedRamFSInode>()
+                .ok_or(SystemError::EPERM)?
+                .0
+                .lock()
+                .parent 
+            = Arc::downgrade(&target
+                .clone()
+                .downcast_arc::<LockedRamFSInode>()
+                .ok_or(SystemError::EPERM)?
+            );
+            return Ok(());
+        }() {
+            self.link(old_name, &inode)?;
+            target.unlink(new_name)?;
+            return Err(e);
+        }
+
         return Ok(());
     }
 
