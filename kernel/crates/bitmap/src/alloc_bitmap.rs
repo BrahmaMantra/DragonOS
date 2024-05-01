@@ -21,6 +21,12 @@ impl AllocBitmap {
         }
     }
 
+    pub fn bitand_assign(&mut self, rhs: &Self) {
+        for i in 0..rhs.data.len() {
+            self.data[i] &= rhs.data[i];
+        }
+    }
+
     pub fn data(&self) -> &[usize] {
         &self.data
     }
@@ -115,8 +121,8 @@ impl BitMapOps<usize> for AllocBitmap {
     }
 }
 
-impl BitAnd for AllocBitmap {
-    type Output = Self;
+impl BitAnd for &AllocBitmap {
+    type Output = AllocBitmap;
 
     fn bitand(self, rhs: Self) -> Self::Output {
         let mut result = AllocBitmap::new(self.elements);
@@ -124,5 +130,13 @@ impl BitAnd for AllocBitmap {
             result.data[i] = self.data[i] & rhs.data[i];
         }
         result
+    }
+}
+
+impl BitAnd for AllocBitmap {
+    type Output = AllocBitmap;
+
+    fn bitand(self, rhs: Self) -> Self::Output {
+        &self & &rhs
     }
 }
