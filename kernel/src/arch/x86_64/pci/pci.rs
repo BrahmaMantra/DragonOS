@@ -10,6 +10,7 @@ use crate::kerror;
 use crate::mm::PhysAddr;
 
 use acpi::mcfg::Mcfg;
+use log::warn;
 use system_error::SystemError;
 use unified_init::macros::unified_init;
 
