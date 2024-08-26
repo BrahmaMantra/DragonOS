@@ -516,7 +516,7 @@ impl InnerAddressSpace {
         //     page_count
         // );
         let (mut active, mut inactive);
-        let mut flusher = if self.is_current() {
+        let flusher = if self.is_current() {
             active = PageFlushAll::new();
             &mut active as &mut dyn Flusher<MMArch>
         } else {
@@ -556,12 +556,14 @@ impl InnerAddressSpace {
                 return Err(SystemError::EACCES);
             }
 
+            r_guard.set_vm_flags(VmFlags::from(prot_flags));
+
             let new_flags: PageFlags<MMArch> = r_guard
                 .flags()
                 .set_execute(prot_flags.contains(ProtFlags::PROT_EXEC))
                 .set_write(prot_flags.contains(ProtFlags::PROT_WRITE));
 
-            r_guard.remap(new_flags, mapper, &mut flusher)?;
+            r_guard.remap(new_flags, mapper, &mut *flusher)?;
             drop(r_guard);
             self.mappings.insert_vma(r);
         }
@@ -576,7 +578,7 @@ impl InnerAddressSpace {
         behavior: MadvFlags,
     ) -> Result<(), SystemError> {
         let (mut active, mut inactive);
-        let mut flusher = if self.is_current() {
+        let flusher = if self.is_current() {
             active = PageFlushAll::new();
             &mut active as &mut dyn Flusher<MMArch>
         } else {
@@ -604,7 +606,7 @@ impl InnerAddressSpace {
             if let Some(after) = split_result.after {
                 self.mappings.insert_vma(after);
             }
-            r.do_madvise(behavior, mapper, &mut flusher)?;
+            r.do_madvise(behavior, mapper, &mut *flusher)?;
             self.mappings.insert_vma(r);
         }
         Ok(())
@@ -1116,7 +1118,7 @@ impl LockedVMA {
         let before: Option<Arc<LockedVMA>> = guard.region.before(&region).map(|virt_region| {
             let mut vma: VMA = unsafe { guard.clone() };
             vma.region = virt_region;
-
+            vma.mapped = false;
             let vma: Arc<LockedVMA> = LockedVMA::new(vma);
             vma
         });
@@ -1124,7 +1126,7 @@ impl LockedVMA {
         let after: Option<Arc<LockedVMA>> = guard.region.after(&region).map(|virt_region| {
             let mut vma: VMA = unsafe { guard.clone() };
             vma.region = virt_region;
-
+            vma.mapped = false;
             let vma: Arc<LockedVMA> = LockedVMA::new(vma);
             vma
         });
@@ -1134,20 +1136,24 @@ impl LockedVMA {
         if let Some(before) = before.clone() {
             let virt_iter = before.lock().region.iter_pages();
             for frame in virt_iter {
-                let paddr = utable.translate(frame.virt_address()).unwrap().0;
-                let page = page_manager_guard.get_mut(&paddr);
-                page.insert_vma(before.clone());
-                page.remove_vma(self);
+                if let Some((paddr, _)) = utable.translate(frame.virt_address()) {
+                    let page = page_manager_guard.get_mut(&paddr);
+                    page.insert_vma(before.clone());
+                    page.remove_vma(self);
+                    before.lock().mapped = true;
+                }
             }
         }
 
         if let Some(after) = after.clone() {
             let virt_iter = after.lock().region.iter_pages();
             for frame in virt_iter {
-                let paddr = utable.translate(frame.virt_address()).unwrap().0;
-                let page = page_manager_guard.get_mut(&paddr);
-                page.insert_vma(after.clone());
-                page.remove_vma(self);
+                if let Some((paddr, _)) = utable.translate(frame.virt_address()) {
+                    let page = page_manager_guard.get_mut(&paddr);
+                    page.insert_vma(after.clone());
+                    page.remove_vma(self);
+                    after.lock().mapped = true;
+                }
             }
         }
 
@@ -1201,6 +1207,7 @@ impl Drop for LockedVMA {
 }
 
 /// VMA切分结果
+#[allow(dead_code)]
 pub struct VMASplitResult {
     pub prev: Option<Arc<LockedVMA>>,
     pub middle: Arc<LockedVMA>,
@@ -1490,12 +1497,6 @@ impl VMA {
             // 将VMA加入到anon_vma
             let page = page_manager_guard.get_mut(&paddr);
             page.insert_vma(r.clone());
-
-            // 清空内存
-            unsafe {
-                let vaddr = MMArch::phys_2_virt(paddr).unwrap();
-                MMArch::write_bytes(vaddr, 0, MMArch::PAGE_SIZE);
-            }
         }
         // kdebug!("VMA::zeroed: done");
         return Ok(r);

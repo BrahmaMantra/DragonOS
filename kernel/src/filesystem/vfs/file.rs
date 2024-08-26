@@ -7,6 +7,8 @@ use alloc::{
 };
 use system_error::SystemError;
 
+use super::{Dirent, FileType, IndexNode, InodeId, Metadata, SpecialNodeData};
+use crate::filesystem::eventfd::EventFdInode;
 use crate::{
     driver::{
         base::{block::SeekFrom, device::DevicePrivateData},
@@ -20,10 +22,8 @@ use crate::{
         event_poll::{EPollItem, EPollPrivateData, EventPoll},
         socket::SocketInode,
     },
-    process::ProcessManager,
+    process::{cred::Cred, ProcessManager},
 };
-
-use super::{Dirent, FileType, IndexNode, InodeId, Metadata, SpecialNodeData};
 
 /// 文件私有信息的枚举类型
 #[derive(Debug, Clone)]
@@ -131,6 +131,8 @@ pub struct File {
     /// readdir时候用的，暂存的本次循环中，所有子目录项的名字的数组
     readdir_subdirs_name: SpinLock<Vec<String>>,
     pub private_data: SpinLock<FilePrivateData>,
+    /// 文件的凭证
+    cred: Cred,
 }
 
 impl File {
@@ -154,6 +156,7 @@ impl File {
             file_type,
             readdir_subdirs_name: SpinLock::new(Vec::default()),
             private_data: SpinLock::new(FilePrivateData::default()),
+            cred: ProcessManager::current_pcb().cred(),
         };
         f.inode.open(f.private_data.lock(), &mode)?;
 
@@ -408,6 +411,7 @@ impl File {
             file_type: self.file_type,
             readdir_subdirs_name: SpinLock::new(self.readdir_subdirs_name.lock().clone()),
             private_data: SpinLock::new(self.private_data.lock().clone()),
+            cred: self.cred.clone(),
         };
         // 调用inode的open方法，让inode知道有新的文件打开了这个inode
         if self
@@ -492,11 +496,7 @@ impl File {
                 return inode.inner().lock().add_epoll(epitem);
             }
             _ => {
-                let r = self.inode.ioctl(
-                    EventPoll::ADD_EPOLLITEM,
-                    &epitem as *const Arc<EPollItem> as usize,
-                    &self.private_data.lock(),
-                );
+                let r = self.inode.kernel_ioctl(epitem, &self.private_data.lock());
                 if r.is_err() {
                     return Err(SystemError::ENOSYS);
                 }
@@ -513,9 +513,19 @@ impl File {
                 let inode = self.inode.downcast_ref::<SocketInode>().unwrap();
                 let mut socket = inode.inner();
 
-                return socket.remove_epoll(epoll);
+                socket.remove_epoll(epoll)
             }
-            _ => return Err(SystemError::ENOSYS),
+            FileType::Pipe => {
+                let inode = self.inode.downcast_ref::<LockedPipeInode>().unwrap();
+                inode.inner().lock().remove_epoll(epoll)
+            }
+            _ => {
+                let inode = self
+                    .inode
+                    .downcast_ref::<EventFdInode>()
+                    .ok_or(SystemError::ENOSYS)?;
+                inode.remove_epoll(epoll)
+            }
         }
     }
 
@@ -571,6 +581,17 @@ impl FileDescriptorVec {
             }
         }
         return res;
+    }
+
+    /// 返回 `已经打开的` 文件描述符的数量
+    pub fn fd_open_count(&self) -> usize {
+        let mut size = 0;
+        for fd in &self.fds {
+            if fd.is_some() {
+                size += 1;
+            }
+        }
+        return size;
     }
 
     /// @brief 判断文件描述符序号是否合法
@@ -632,14 +653,14 @@ impl FileDescriptorVec {
     /// ## 参数
     ///
     /// - `fd` 文件描述符序号
-    pub fn drop_fd(&mut self, fd: i32) -> Result<(), SystemError> {
+    pub fn drop_fd(&mut self, fd: i32) -> Result<Arc<File>, SystemError> {
         self.get_file_by_fd(fd).ok_or(SystemError::EBADF)?;
 
         // 把文件描述符数组对应位置设置为空
         let file = self.fds[fd as usize].take().unwrap();
 
         assert!(Arc::strong_count(&file) == 1);
-        return Ok(());
+        return Ok(file);
     }
 
     #[allow(dead_code)]

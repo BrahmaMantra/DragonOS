@@ -31,6 +31,7 @@ pub struct KernelWaitOption<'a> {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct WaitIdInfo {
     pub pid: Pid,
     pub status: i32,

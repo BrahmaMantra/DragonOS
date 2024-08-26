@@ -15,6 +15,7 @@ static mut CMAPPER: Option<LockedCacheMapper> = None;
 /// 该结构体向外提供BlockCache服务
 pub struct BlockCache;
 
+#[allow(static_mut_refs)]
 unsafe fn mapper() -> Result<&'static mut LockedCacheMapper, BlockCacheError> {
     unsafe {
         match &mut CMAPPER {
@@ -24,6 +25,7 @@ unsafe fn mapper() -> Result<&'static mut LockedCacheMapper, BlockCacheError> {
     };
 }
 
+#[allow(static_mut_refs)]
 unsafe fn space() -> Result<&'static mut LockedCacheSpace, BlockCacheError> {
     unsafe {
         match &mut CSPACE {
