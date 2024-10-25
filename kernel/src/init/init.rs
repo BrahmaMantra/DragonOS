@@ -1,5 +1,3 @@
-use log::warn;
-
 use crate::{
     arch::{
         init::{early_setup_arch, setup_arch, setup_arch_post},
@@ -31,6 +29,7 @@ use crate::{
         clocksource::clocksource_boot_finish, timekeeping::timekeeping_init, timer::timer_init,
     },
 };
+use log::warn;
 
 use super::{
     boot::{boot_callback_except_early, boot_callbacks},
@@ -90,8 +89,8 @@ fn do_start_kernel() {
     kthread_init();
     setup_arch_post().expect("setup_arch_post failed");
     clocksource_boot_finish();
-
     Futex::init();
+    crate::bpf::init_bpf_system();
  
     setup_arch_post().expect("setup_arch_post failed");
 
