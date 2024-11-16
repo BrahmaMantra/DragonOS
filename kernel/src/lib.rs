@@ -19,6 +19,7 @@
 // match语句中能够使用范围
 #![feature(exclusive_range_pattern)]
 #![feature(c_variadic)]
+#![feature(asm_goto)]
 #![cfg_attr(target_os = "none", no_std)]
 #![allow(static_mut_refs, non_local_definitions, internal_features)]
 // clippy的配置

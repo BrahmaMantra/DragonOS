@@ -58,6 +58,7 @@ fn do_start_kernel() {
 
     unsafe { mm_init() };
 
+    // crate::debug::jump_label::static_keys_init();
     if scm_reinit().is_ok() {
         if let Err(e) = textui_init() {
             warn!("Failed to init textui: {:?}", e);
@@ -91,6 +92,7 @@ fn do_start_kernel() {
     clocksource_boot_finish();
     Futex::init();
     crate::bpf::init_bpf_system();
+    crate::debug::jump_label::static_keys_init();
  
     setup_arch_post().expect("setup_arch_post failed");
 
